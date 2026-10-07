@@ -1,8 +1,11 @@
 """Detect urine test-strip pads with the Roboflow "Urine Test Strips (Main)" workflow.
 
 Usage:
-    export ROBOFLOW_API_KEY=...        # never commit this
+    export ROBOFLOW_API_KEY=...        # or put it in a .env file (never commit it)
     python urine_strip_detect.py path/to/strip.jpg [--confidence 0.4] [--json]
+
+Run with no image argument (e.g. VS Code's Run button) to pick an image
+in a file dialog.
 """
 
 import argparse
@@ -16,11 +19,53 @@ API_URL = "https://serverless.roboflow.com"
 WORKSPACE_NAME = "sathakshi2-gmail-com"
 WORKFLOW_ID = "urine-test-strips-main-3jtim-5rdpn"
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
+
+
+def load_dotenv(path: str = os.path.join(HERE, ".env")) -> None:
+    """Load KEY=value lines from a .env file without overriding real env vars."""
+    if not os.path.isfile(path):
+        return
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip().strip("\"'"))
+
+
+def choose_image() -> str | None:
+    """Ask for an image in a file dialog, falling back to the first image here."""
+    try:
+        import tkinter
+        from tkinter import filedialog
+
+        root = tkinter.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        path = filedialog.askopenfilename(
+            title="Choose a urine test-strip image",
+            initialdir=HERE,
+            filetypes=[("Images", " ".join("*" + e for e in IMAGE_EXTENSIONS))],
+        )
+        root.destroy()
+        return path or None
+    except Exception:
+        for name in sorted(os.listdir(HERE)):
+            if name.lower().endswith(IMAGE_EXTENSIONS):
+                return os.path.join(HERE, name)
+        return None
+
 
 def get_client() -> InferenceHTTPClient:
     api_key = os.environ.get("ROBOFLOW_API_KEY")
     if not api_key:
-        sys.exit("Error: set the ROBOFLOW_API_KEY environment variable first.")
+        sys.exit(
+            "Error: no API key found. Create a file named .env next to this script "
+            "containing ROBOFLOW_API_KEY=your_private_key (or set that environment variable)."
+        )
     return InferenceHTTPClient(api_url=API_URL, api_key=api_key)
 
 
@@ -64,12 +109,20 @@ def print_detections(detections: list[dict]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("image", help="path or URL of a test-strip image")
+    parser.add_argument("image", nargs="?",
+                        help="path or URL of a test-strip image (omit to pick one)")
     parser.add_argument("--confidence", type=float, default=None,
                         help="confidence threshold (workflow default: 0.4)")
     parser.add_argument("--json", action="store_true",
                         help="also print the raw workflow response")
     args = parser.parse_args()
+
+    load_dotenv()
+    if not args.image:
+        args.image = choose_image()
+        if not args.image:
+            sys.exit("Error: no image chosen.")
+        print(f"Image: {args.image}")
 
     if not args.image.startswith(("http://", "https://")) and not os.path.isfile(args.image):
         sys.exit(f"Error: image not found: {args.image}")
